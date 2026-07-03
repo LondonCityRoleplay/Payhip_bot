@@ -4,31 +4,15 @@ from disnake.ext import commands
 from utils.database import get_database_pool
 from utils.permissions import is_authorized
 import config
-import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
 
 # This cog allows a server owner to define a log channel where license verifications will be announced.
 class SetLogChannel(commands.Cog):
+    # Table creation lives in initialize_database() with the rest of the schema.
     def __init__(self, bot):
         self.bot = bot
-        # Schedule the database table creation as a background task after the bot is ready
-        self.bot.loop.create_task(self.setup_table())
-        
-    # Ensures the required table exists for storing log channel mappings
-    async def setup_table(self):
-        await self.bot.wait_until_ready()
-        try:
-            async with (await get_database_pool()).acquire() as conn:
-                await conn.execute("""
-                    CREATE TABLE IF NOT EXISTS server_log_channels (
-                        guild_id TEXT PRIMARY KEY,
-                        channel_id TEXT NOT NULL
-                    );
-                """)
-        except asyncpg.PostgresError as e:
-            logger.error(f"[DB Error] Failed to create server_log_channels table: {e}")
 
     @commands.slash_command(
         description="Set a channel to log successful verifications (owner or permitted roles).",

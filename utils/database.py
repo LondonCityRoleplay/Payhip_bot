@@ -90,6 +90,15 @@ async def initialize_database():
                 created_at  TIMESTAMPTZ DEFAULT NOW()
             )
             """)
+            # Must be created here, not in the server_log cog: the ALTER below runs on
+            # startup and crashed on fresh databases when the table didn't exist yet.
+            await conn.execute("""
+            CREATE TABLE IF NOT EXISTS server_log_channels (
+                guild_id   TEXT PRIMARY KEY,
+                channel_id TEXT NOT NULL,
+                permission_warned BOOLEAN DEFAULT FALSE
+            )
+            """)
             await conn.execute("""
             ALTER TABLE server_log_channels ADD COLUMN IF NOT EXISTS permission_warned BOOLEAN DEFAULT FALSE
             """)
@@ -186,17 +195,34 @@ async def get_role_ids_with_permission(guild_id, permission) -> set:
         raise DatabaseError(f"Failed to fetch roles for permission '{permission}'.") from e
 
 
-async def fetch_products(guild_id) -> dict:
+async def fetch_product_names(guild_id) -> list:
+    # Names only — no secrets touched. Decryption happens per-product in
+    # fetch_product_secret so one corrupt record can't break the whole guild.
     try:
         async with (await get_database_pool()).acquire() as conn:
             rows = await conn.fetch(
-                "SELECT product_name, product_secret FROM products WHERE guild_id = $1", guild_id
+                "SELECT product_name FROM products WHERE guild_id = $1 ORDER BY product_name", guild_id
             )
-            return {row["product_name"]: decrypt_data(row["product_secret"]) for row in rows}
-    except EncryptionError:
-        raise
+        return [row["product_name"] for row in rows]
     except asyncpg.PostgresError as e:
         raise DatabaseError(f"Failed to fetch products for guild {guild_id}.") from e
+
+
+async def fetch_product_secret(guild_id, product_name) -> str | None:
+    # Decrypts exactly one product's secret, at the moment it's needed.
+    # Returns None if the product doesn't exist. Raises EncryptionError if the
+    # record can't be decrypted — callers surface that for this product only.
+    try:
+        async with (await get_database_pool()).acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT product_secret FROM products WHERE guild_id = $1 AND product_name = $2",
+                guild_id, product_name
+            )
+    except asyncpg.PostgresError as e:
+        raise DatabaseError(f"Failed to fetch product '{product_name}' for guild {guild_id}.") from e
+    if row is None:
+        return None
+    return decrypt_data(row["product_secret"])
 
 
 async def save_verified_license(user_id, guild_id, product_name):

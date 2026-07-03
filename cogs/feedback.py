@@ -1,3 +1,4 @@
+import uuid
 import disnake
 from disnake.ext import commands
 import config
@@ -27,7 +28,8 @@ class FeedbackModal(disnake.ui.Modal):
                 max_length=1000,
             ),
         ]
-        super().__init__(title="Send Feedback", custom_id="feedback_modal", components=components)
+        # Unique per instance — static modal custom_ids collide in disnake's modal store.
+        super().__init__(title="Send Feedback", custom_id=f"feedback_modal:{uuid.uuid4().hex[:12]}", components=components)
 
     async def callback(self, inter: disnake.ModalInteraction):
         subject = inter.text_values["subject"].strip()

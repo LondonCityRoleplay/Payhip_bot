@@ -28,7 +28,20 @@ intents.guilds = True
 command_sync_flags = commands.CommandSyncFlags.default()
 command_sync_flags.sync_commands_debug = True
 
-bot = commands.InteractionBot(
+class KeyVerifyBot(commands.InteractionBot):
+    # disnake has no on_close event, so cleanup must live in the close() override —
+    # this runs on Ctrl+C / SIGTERM before the gateway connection is torn down.
+    async def close(self):
+        try:
+            pool = await get_database_pool()
+            await pool.close()
+            logger.info("Database connection closed.")
+        except Exception as e:
+            logger.error(f"Error closing database: {e}")
+        await super().close()
+
+
+bot = KeyVerifyBot(
     intents=intents,
     command_sync_flags=command_sync_flags,
 )
@@ -84,17 +97,6 @@ async def on_guild_join(guild: disnake.Guild):
     if row:
         logger.warning(f"[Blacklist] Joined blacklisted guild '{guild.name}' ({guild.id}). Leaving immediately.")
         await guild.leave()
-
-
-@bot.event
-async def on_close():
-    logger.info("Bot is shutting down...")
-    try:
-        pool = await get_database_pool()
-        await pool.close()
-        logger.info("Database connection closed.")
-    except Exception as e:
-        logger.error(f"Error closing database: {e}")
 
 
 def run():

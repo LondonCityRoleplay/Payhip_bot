@@ -1,7 +1,8 @@
 import disnake
 from disnake.ext.commands import CooldownMapping, BucketType
 from handlers.verify_license_modal import VerifyLicenseModal
-from utils.database import fetch_products, get_database_pool, get_verified_license
+from utils.database import fetch_product_secret, get_database_pool, get_verified_license
+from utils.errors import EncryptionError
 
 import config
 import time
@@ -29,10 +30,11 @@ verify_cooldown = CooldownMapping.from_cooldown(1, 20, BucketType.user)
 
 
 class ProductPaginationView(disnake.ui.View):
-    def __init__(self, products: dict):
+    # Holds product names only — the secret is decrypted on demand when a
+    # product is actually selected (see handle_product_dropdown).
+    def __init__(self, product_names: list):
         super().__init__(timeout=60)
-        self.products = products
-        self.product_names = list(products.keys())
+        self.product_names = product_names
         self.page = 0
         self.page_size = 24
         self.update_items()
@@ -63,7 +65,7 @@ class ProductPaginationView(disnake.ui.View):
             self.add_item(next_btn)
 
     async def select_callback(self, interaction: disnake.MessageInteraction):
-        await handle_product_dropdown(interaction, self.products)
+        await handle_product_dropdown(interaction)
 
     async def prev_page(self, interaction: disnake.MessageInteraction):
         self.page -= 1
@@ -100,47 +102,80 @@ class VerificationButton(disnake.ui.View):
 
         await interaction.response.defer(ephemeral=True)
 
-        products = await fetch_products(guild_id)
-        if not products:
+        # Names and role ids only — secrets stay encrypted until a product is picked.
+        async with (await get_database_pool()).acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT product_name, role_id FROM products WHERE guild_id = $1 ORDER BY product_name",
+                guild_id
+            )
+        if not rows:
             await interaction.followup.send("❌ No products have been set up for this server yet. Contact the server owner.", ephemeral=True)
             return
 
-        async with (await get_database_pool()).acquire() as conn:
-            role_rows = await conn.fetch(
-                "SELECT product_name, role_id FROM products WHERE guild_id = $1",
-                guild_id
-            )
-        role_map = {row["product_name"]: row["role_id"] for row in role_rows}
-
         reassigned_roles = []
-        unowned_products = {}
+        failed_roles = []
+        unowned_products = []
 
-        for name, secret in products.items():
+        for row in rows:
+            name = row["product_name"]
             if await get_verified_license(interaction.author.id, guild_id, name):
-                role_id = role_map.get(name)
+                role_id = row["role_id"]
                 if role_id:
-                    role = disnake.utils.get(interaction.guild.roles, id=int(role_id))
+                    role = interaction.guild.get_role(int(role_id))
                     if role and role not in interaction.author.roles:
-                        await interaction.author.add_roles(role)
-                        reassigned_roles.append(role.name)
+                        # One unassignable role must not abort reassignment of the rest.
+                        try:
+                            await interaction.author.add_roles(role)
+                            reassigned_roles.append(role.name)
+                        except disnake.Forbidden:
+                            logger.warning(f"[Permission Error] Can't reassign '{role.name}' in '{interaction.guild.name}' — bot role too low or missing Manage Roles.")
+                            failed_roles.append(role.name)
+                        except disnake.HTTPException as e:
+                            logger.error(f"[Role Reassign Failed] '{role.name}' for {interaction.author} in '{interaction.guild.name}': {e}")
+                            failed_roles.append(role.name)
             else:
-                unowned_products[name] = secret
+                unowned_products.append(name)
 
         if reassigned_roles:
             await interaction.followup.send(f"✅ Roles reassigned: {', '.join(reassigned_roles)}", ephemeral=True)
 
+        if failed_roles:
+            await interaction.followup.send(
+                f"⚠️ I couldn't reassign: {', '.join(failed_roles)}. "
+                f"Ask the server owner to move my role above them in Server Settings → Roles.",
+                ephemeral=True
+            )
+
         if unowned_products:
             view = ProductPaginationView(unowned_products)
             await interaction.followup.send("Select a product to verify:", view=view, ephemeral=True)
-        elif not reassigned_roles:
+        elif not reassigned_roles and not failed_roles:
             await interaction.followup.send("✅ You are already fully verified for all products!", ephemeral=True)
 
 
-async def handle_product_dropdown(interaction, products):
+async def handle_product_dropdown(interaction):
     product_name = interaction.data["values"][0]
     logger.info(f"[Product Selected] {interaction.user} selected '{product_name}' in '{interaction.guild.name}'.")
 
-    product_secret_key = products[product_name]
+    # Decrypt this one product's secret only now that it's actually needed.
+    try:
+        product_secret_key = await fetch_product_secret(str(interaction.guild_id), product_name)
+    except EncryptionError:
+        logger.error(f"[Encryption Error] Undecryptable secret for '{product_name}' in '{interaction.guild.name}'.")
+        await interaction.response.send_message(
+            "❌ This product's stored data is unreadable. Ask the server owner to re-add it.",
+            ephemeral=True, delete_after=config.message_timeout
+        )
+        return
+
+    if product_secret_key is None:
+        # Product was removed between the button click and the selection.
+        await interaction.response.send_message(
+            "❌ This product no longer exists. Please click Verify again.",
+            ephemeral=True, delete_after=config.message_timeout
+        )
+        return
+
     modal = VerifyLicenseModal(product_name, product_secret_key)
     try:
         await interaction.response.send_modal(modal)

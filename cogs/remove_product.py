@@ -1,6 +1,6 @@
 import disnake
 from disnake.ext import commands
-from utils.database import get_database_pool, fetch_products
+from utils.database import get_database_pool, fetch_product_names
 from utils.permissions import is_authorized
 import config
 import logging
@@ -15,12 +15,10 @@ class RemoveProduct(commands.Cog):
         if not await is_authorized(inter, "remove_product"):
             return
 
-        products = await fetch_products(str(inter.guild.id))
-        if not products:
+        product_list = await fetch_product_names(str(inter.guild.id))
+        if not product_list:
             await inter.response.send_message("❌ No products to remove.", ephemeral=True, delete_after=config.message_timeout)
             return
-
-        product_list = list(products.keys())
 
         # The Paginated View Class
         class PaginatorView(disnake.ui.View):

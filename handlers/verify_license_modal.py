@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 import disnake
 import aiohttp
 from utils.database import get_database_pool, save_verified_license
@@ -33,8 +34,10 @@ class VerifyLicenseModal(disnake.ui.Modal):
                 max_length=50,
             )
         ]
-        # Use 'display_name' for the UI title, but 'self.product_name' for logic
-        super().__init__(title=f"Verify {display_name}", custom_id="verify_license_modal", components=components)
+        # Unique custom_id per instance: disnake keys open modals by (user, custom_id),
+        # so a shared static id lets an abandoned modal's timeout silently kill a newer
+        # open one — the user then gets Discord's "Something went wrong" on submit.
+        super().__init__(title=f"Verify {display_name}", custom_id=f"verify_license_modal:{uuid.uuid4().hex[:12]}", components=components)
 
     # Handles what happens after the user submits the modal.
     # It checks the license with Payhip, assigns a role, and logs the action if everything is valid.
@@ -50,7 +53,13 @@ class VerifyLicenseModal(disnake.ui.Modal):
             return
 
         # Defer immediately — Payhip API + DB queries will exceed the 3s deadline.
-        await interaction.response.defer(ephemeral=True)
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except disnake.NotFound:
+            # Discord already invalidated the token (gateway lag / Discord incident).
+            # Nothing can be sent to the user anymore — they saw "Something went wrong".
+            logger.warning(f"[Expired Interaction] Modal submit token already dead for {interaction.user} in '{interaction.guild.name}' — Discord-side delay.")
+            return
 
         PAYHIP_VERIFY_URL = f"https://payhip.com/api/v2/license/verify?license_key={license_key}"
         PAYHIP_INCREMENT_USAGE_URL = "https://payhip.com/api/v2/license/usage"

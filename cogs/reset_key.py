@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 import disnake
 from disnake.ext import commands
 import aiohttp
@@ -29,7 +30,8 @@ class ResetKeyModal(disnake.ui.Modal):
                 max_length=50,
             )
         ]
-        super().__init__(title=f"Reset License: {display_name}", custom_id="reset_key_modal", components=components)
+        # Unique per instance — static modal custom_ids collide in disnake's modal store.
+        super().__init__(title=f"Reset License: {display_name}", custom_id=f"reset_key_modal:{uuid.uuid4().hex[:12]}", components=components)
 
     async def callback(self, interaction: disnake.ModalInteraction):
         license_key = interaction.text_values["license_key"].strip()

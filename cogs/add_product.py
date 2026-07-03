@@ -6,8 +6,7 @@ from utils.permissions import is_authorized
 import config
 import logging
 import uuid
-import asyncpg 
-import traceback 
+import asyncpg
 
 logger = logging.getLogger(__name__)
 product_session_cache = {}  # session_id -> (product_name, product_secret)
@@ -43,9 +42,10 @@ class AddProductModal(disnake.ui.Modal):
                 max_length=100,
             )
         ]
+        # Unique per instance — static modal custom_ids collide in disnake's modal store.
         super().__init__(
             title="Add a New Product",
-            custom_id="add_product_modal",
+            custom_id=f"add_product_modal:{uuid.uuid4().hex[:12]}",
             components=components
         )
 
@@ -238,15 +238,13 @@ class RoleSelectView(disnake.ui.View):
                         delete_after=config.message_timeout
                     )
         
-        except Exception as e:
-            # This will catch and print the *real* error
-            print(f"--- UNHANDLED ERROR IN FINISH_PRODUCT ---")
-            traceback.print_exc()
-            logger.error(f"--- UNHANDLED ERROR IN FINISH_PRODUCT ---")
-            logger.exception(e)
+        except Exception:
+            # Full traceback goes to the log; the user gets a generic message —
+            # internal error details must never be shown in Discord.
+            logger.exception(f"[Add Product] Unhandled error finishing '{self.session_id}' in '{self.guild.name}'")
             try:
                 await interaction.followup.send(
-                    f"❌ An unknown error occurred. The developers have been notified.\n`Error: {e}`", 
+                    "❌ Something went wrong while saving the product. Please try again, and use /feedback if it keeps happening.",
                     ephemeral=True
                 )
             except Exception:

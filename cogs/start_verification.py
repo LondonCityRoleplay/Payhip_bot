@@ -1,7 +1,7 @@
 import disnake
 import logging
 from disnake.ext import commands
-from utils.database import get_database_pool, fetch_products
+from utils.database import get_database_pool, fetch_product_names
 from utils.permissions import is_authorized
 from handlers.verification_handler import create_verification_embed, create_verification_view
 import config
@@ -19,8 +19,7 @@ class StartVerification(commands.Cog):
         if not await is_authorized(inter, "start_verification"):
             return
 
-        products = await fetch_products(str(inter.guild.id))
-        has_products = bool(products)
+        has_products = bool(await fetch_product_names(str(inter.guild.id)))
 
         embed = create_verification_embed()
         view = create_verification_view()

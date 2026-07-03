@@ -1,4 +1,5 @@
 import asyncpg
+import uuid
 import disnake
 from disnake.ext import commands
 from utils.database import get_database_pool
@@ -161,7 +162,8 @@ class RenameProductModal(disnake.ui.Modal):
                 max_length=100,
             )
         ]
-        super().__init__(title="Rename Product", custom_id="rename_product_modal", components=components)
+        # Unique per instance — static modal custom_ids collide in disnake's modal store.
+        super().__init__(title="Rename Product", custom_id=f"rename_product_modal:{uuid.uuid4().hex[:12]}", components=components)
 
     async def callback(self, interaction: disnake.ModalInteraction):
         new_name = interaction.text_values["new_name"].strip()

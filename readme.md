@@ -27,6 +27,8 @@ KeyVerify lets Payhip sellers gate Discord roles behind license key verification
 - Verification logging per server
 - Rate limiting to prevent abuse
 - Persistent verification buttons — survive bot restarts
+- Per-role command permissions — delegate bot management without Discord admin rights
+- Built-in feedback command wired to the developer
 
 ---
 
@@ -42,9 +44,11 @@ KeyVerify lets Payhip sellers gate Discord roles behind license key verification
 | `/reset_key` | Reset the usage count of a license key on Payhip. |
 | `/set_lchannel` | Set the channel where verification events are logged. |
 | `/remove_user` | Revoke a user's access and remove their verification records. License disabling on Payhip must be done manually from your Payhip dashboard. |
+| `/permissions` | Choose which commands a role may use (server owner only). |
+| `/feedback` | Send feedback or a suggestion to the developer. |
 | `/help` | Show available commands and support information. |
 
-All commands require server administrator permissions.
+The server owner can always use every command. Everyone else needs a role that was granted access via `/permissions` — an interactive checklist where the owner picks, per role, exactly which commands it may use. `/permissions` itself is always owner-only.
 
 ---
 
